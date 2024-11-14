@@ -1,0 +1,14 @@
+certs_and_keys:
+  - alias: cert1
+    path: /path/to/cert1.crt
+    type: cert
+  - alias: cert1
+    path: /path/to/cert1.key
+    type: key
+  - alias: cert2
+    path: /path/to/cert2.crt
+    type: cert
+  - alias: cert2
+    path: /path/to/cert2.key
+    type: key
+

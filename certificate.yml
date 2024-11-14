@@ -1,0 +1,70 @@
+---
+- name: Manage multiple certificates and keys in HashiCorp Vault
+  hosts: localhost
+  gather_facts: no
+  vars_files:
+    - vars/cert_files.yml  # This file contains paths to certs and keys
+
+  tasks:
+    - name: Read certificates and keys from files
+      slurp:
+        src: "{{ item.path }}"
+      with_items: "{{ certs_and_keys }}"
+      register: cert_key_contents
+
+    - name: Prepare data for Vault storage
+      set_fact:
+        certs_data: >-
+          {{
+            certs_data | default({}) | combine({
+              item.alias: {
+                "cert": cert_key_contents.results[item_index].content | b64decode,
+                "key": cert_key_contents.results[item_index + 1].content | b64decode
+              }
+            })
+          }}
+      with_items: "{{ certs_and_keys }}"
+      loop_control:
+        index_var: item_index
+      when: (item.type == 'cert') and
+            (item_index + 1 < cert_key_contents.results | length) and
+            certs_and_keys[item_index + 1].type == 'key'
+
+    - name: Store the data in Vault
+      uri:
+        url: "{{ vault_address }}/v1/{{ vault_cert_path }}"
+        method: POST
+        headers:
+          "X-Vault-Token": "{{ vault_token }}"
+          "Content-Type": "application/json"
+        body_format: json
+        body:
+          data: "{{ certs_data }}"
+      when: certs_data is defined
+
+    - name: Retrieve the data from Vault
+      uri:
+        url: "{{ vault_address }}/v1/{{ vault_cert_path }}"
+        method: GET
+        headers:
+          "X-Vault-Token": "{{ vault_token }}"
+        return_content: yes
+      register: retrieved_certs
+
+    - name: Display the retrieved certificates and keys
+      debug:
+        msg: "Alias: {{ item.key }} | Cert: {{ item.value.cert }} | Key: {{ item.value.key }}"
+      with_dict: "{{ retrieved_certs.json.data }}"
+
+    - name: Check validity of each certificate
+      shell: "echo '{{ item.value.cert }}' | openssl x509 -noout -checkend 0"
+      with_dict: "{{ retrieved_certs.json.data }}"
+      register: cert_validity
+      ignore_errors: yes
+
+    - name: Print message for invalid certificates
+      debug:
+        msg: "Certificate for alias {{ item.item.key }} is expired or invalid. Take corrective action."
+      with_items: "{{ cert_validity.results }}"
+      when: item.rc != 0
+
